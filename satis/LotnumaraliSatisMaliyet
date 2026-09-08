@@ -1,86 +1,215 @@
 DECLARE @BaslangicTarihi DATE = '2026-01-01';
 DECLARE @BitisTarihi     DATE = '2026-06-30';
 
+WITH IHR_SATIS AS
+(
+    SELECT
+        INV.LOGICALREF AS FATURA_REF,
+        INV.FICHENO    AS FATURA_NO,
+        INV.DATE_      AS FATURA_TARIHI,
+        INV.SPECODE    AS OZEL_KOD,
+
+        CL.CODE        AS CARI_KODU,
+        CL.DEFINITION_ AS CARI_UNVANI,
+
+        ITM.LOGICALREF AS STOK_REF,
+        ITM.CODE       AS STOK_KODU,
+        ITM.NAME       AS STOK_ADI,
+
+        LOT.LOGICALREF AS LOT_REF,
+        LOT.CODE       AS LOT_NUMARASI,
+
+        STL.LOGICALREF AS SATIS_STLINE_REF,
+
+        CAST(
+            ISNULL(SLT.AMOUNT,0)
+            * ISNULL(STL.UINFO2,1)
+            / NULLIF(ISNULL(STL.UINFO1,1),0)
+            AS DECIMAL(18,4)
+        ) AS SATILAN_LOT_MIKTARI,
+
+        CAST(
+            ISNULL(STL.PRICE,0)
+            AS DECIMAL(18,4)
+        ) AS SATIS_BIRIM_FIYATI
+
+    FROM LG_001_01_INVOICE INV WITH(NOLOCK)
+
+    INNER JOIN LG_001_01_STLINE STL WITH(NOLOCK)
+        ON STL.INVOICEREF = INV.LOGICALREF
+
+    INNER JOIN LG_001_ITEMS ITM WITH(NOLOCK)
+        ON ITM.LOGICALREF = STL.STOCKREF
+
+    INNER JOIN LG_001_01_SLTRANS SLT WITH(NOLOCK)
+        ON SLT.STTRANSREF = STL.LOGICALREF
+
+    INNER JOIN LG_001_01_SERILOTN LOT WITH(NOLOCK)
+        ON LOT.LOGICALREF = SLT.SLREF
+
+    LEFT JOIN LG_001_CLCARD CL WITH(NOLOCK)
+        ON CL.LOGICALREF = INV.CLIENTREF
+
+    WHERE
+        INV.DATE_ >= @BaslangicTarihi
+        AND INV.DATE_ < DATEADD(DAY,1,@BitisTarihi)
+
+        AND INV.SPECODE = 'IHR'
+        AND ISNULL(INV.CANCELLED,0) = 0
+        AND ISNULL(STL.CANCELLED,0) = 0
+        AND STL.LINETYPE = 0
+        AND INV.TRCODE IN (7,8)
+),
+
+LOT_MALIYET AS
+(
+    SELECT
+        S.*,
+
+        G.HAREKET_TARIHI AS MALIYET_GIRIS_TARIHI,
+        G.TRCODE         AS MALIYET_TRCODE,
+        G.FIS_NO         AS MALIYET_FIS_NO,
+        G.BIRIM_MALIYET  AS LOT_BIRIM_MALIYET
+
+    FROM IHR_SATIS S
+
+    OUTER APPLY
+    (
+        SELECT TOP 1
+
+            STL2.DATE_ AS HAREKET_TARIHI,
+            STL2.TRCODE,
+
+            STF2.FICHENO AS FIS_NO,
+
+            CAST(
+                CASE
+                    WHEN ISNULL(STL2.PRICE,0) > 0
+                        THEN STL2.PRICE
+
+                    WHEN ISNULL(STL2.AMOUNT,0) <> 0
+                        THEN STL2.TOTAL / NULLIF(STL2.AMOUNT,0)
+
+                    ELSE 0
+                END
+                AS DECIMAL(18,6)
+            ) AS BIRIM_MALIYET
+
+        FROM LG_001_01_SLTRANS SLT2 WITH(NOLOCK)
+
+        INNER JOIN LG_001_01_STLINE STL2 WITH(NOLOCK)
+            ON STL2.LOGICALREF = SLT2.STTRANSREF
+
+        LEFT JOIN LG_001_01_STFICHE STF2 WITH(NOLOCK)
+            ON STF2.LOGICALREF = STL2.STFICHEREF
+
+        WHERE
+            SLT2.SLREF = S.LOT_REF
+            AND STL2.STOCKREF = S.STOK_REF
+
+            AND ISNULL(STL2.CANCELLED,0) = 0
+            AND STL2.LINETYPE = 0
+
+            -- Sadece giriş hareketleri
+            AND STL2.IOCODE IN (1,2)
+
+            -- Satış tarihinden sonraki girişleri alma
+            AND STL2.DATE_ <= S.FATURA_TARIHI
+
+            -- Fiyatı olan giriş hareketi
+            AND
+            (
+                ISNULL(STL2.PRICE,0) > 0
+                OR ISNULL(STL2.TOTAL,0) > 0
+            )
+
+        ORDER BY
+            STL2.DATE_ DESC,
+            STL2.LOGICALREF DESC
+
+    ) G
+)
+
 SELECT
-    INV.LOGICALREF                         AS FATURA_REF,
-    INV.FICHENO                            AS FATURA_NO,
-    INV.DATE_                              AS FATURA_TARIHI,
-    INV.SPECODE                            AS OZEL_KOD,
+    FATURA_NO                    AS [Fatura No],
+    FATURA_TARIHI                AS [Fatura Tarihi],
 
-    CL.CODE                                AS CARI_KODU,
-    CL.DEFINITION_                         AS CARI_UNVANI,
+    CARI_KODU                    AS [Cari Kodu],
+    CARI_UNVANI                  AS [Cari Ünvanı],
 
-    ITM.LOGICALREF                         AS STOK_REF,
-    ITM.CODE                               AS STOK_KODU,
-    ITM.NAME                               AS STOK_ADI,
+    STOK_KODU                    AS [Ürün Kodu],
+    STOK_ADI                     AS [Ürün Adı],
 
-    LOT.LOGICALREF                         AS LOT_REF,
-    LOT.CODE                               AS LOT_NUMARASI,
+    LOT_NUMARASI                 AS [Lot Numarası],
 
-    STL.LOGICALREF                         AS STLINE_REF,
+    SATILAN_LOT_MIKTARI          AS [Satılan Lot Miktarı],
+
+    MALIYET_GIRIS_TARIHI         AS [Maliyet Giriş Tarihi],
+    MALIYET_TRCODE               AS [Maliyet TRCODE],
+    MALIYET_FIS_NO               AS [Maliyet Fiş No],
 
     CAST(
-        ISNULL(SLT.AMOUNT,0)
-        * ISNULL(STL.UINFO2,1)
-        / NULLIF(ISNULL(STL.UINFO1,1),0)
+        ISNULL(LOT_BIRIM_MALIYET,0)
         AS DECIMAL(18,4)
-    ) AS LOT_CIKIS_MIKTARI,
+    ) AS [Lot Birim Maliyeti],
 
     CAST(
-        STL.AMOUNT
-        * ISNULL(STL.UINFO2,1)
-        / NULLIF(ISNULL(STL.UINFO1,1),0)
-        AS DECIMAL(18,4)
-    ) AS FATURA_SATIR_MIKTARI,
-
-    CAST(STL.PRICE AS DECIMAL(18,4))       AS SATIS_BIRIM_FIYATI,
-
-    CAST(
-        ISNULL(SLT.AMOUNT,0)
-        * ISNULL(STL.UINFO2,1)
-        / NULLIF(ISNULL(STL.UINFO1,1),0)
-        * STL.PRICE
+        SATILAN_LOT_MIKTARI
+        * ISNULL(LOT_BIRIM_MALIYET,0)
         AS DECIMAL(18,2)
-    ) AS LOT_SATIS_TUTARI
+    ) AS [Faturaya Düşen Üretim Maliyeti],
 
-FROM LG_001_01_INVOICE INV WITH(NOLOCK)
+    CAST(
+        SATILAN_LOT_MIKTARI
+        * SATIS_BIRIM_FIYATI
+        AS DECIMAL(18,2)
+    ) AS [Satış Tutarı],
 
-INNER JOIN LG_001_01_STLINE STL WITH(NOLOCK)
-    ON STL.INVOICEREF = INV.LOGICALREF
+    CAST(
+        (
+            SATILAN_LOT_MIKTARI
+            * SATIS_BIRIM_FIYATI
+        )
+        -
+        (
+            SATILAN_LOT_MIKTARI
+            * ISNULL(LOT_BIRIM_MALIYET,0)
+        )
+        AS DECIMAL(18,2)
+    ) AS [Brüt Kar],
 
-INNER JOIN LG_001_ITEMS ITM WITH(NOLOCK)
-    ON ITM.LOGICALREF = STL.STOCKREF
+    CAST(
+        CASE
+            WHEN SATILAN_LOT_MIKTARI * SATIS_BIRIM_FIYATI = 0
+                THEN 0
 
-INNER JOIN LG_001_01_SLTRANS SLT WITH(NOLOCK)
-    ON SLT.STTRANSREF = STL.LOGICALREF
+            ELSE
+                (
+                    (
+                        SATILAN_LOT_MIKTARI
+                        * SATIS_BIRIM_FIYATI
+                    )
+                    -
+                    (
+                        SATILAN_LOT_MIKTARI
+                        * ISNULL(LOT_BIRIM_MALIYET,0)
+                    )
+                )
+                /
+                NULLIF(
+                    SATILAN_LOT_MIKTARI
+                    * SATIS_BIRIM_FIYATI,
+                    0
+                )
+                * 100
+        END
+        AS DECIMAL(18,2)
+    ) AS [Brüt Kar %]
 
-INNER JOIN LG_001_01_SERILOTN LOT WITH(NOLOCK)
-    ON LOT.LOGICALREF = SLT.SLREF
-
-LEFT JOIN LG_001_CLCARD CL WITH(NOLOCK)
-    ON CL.LOGICALREF = INV.CLIENTREF
-
-WHERE
-    INV.DATE_ >= @BaslangicTarihi
-    AND INV.DATE_ < DATEADD(DAY,1,@BitisTarihi)
-
-    -- IHR özel kodlu faturalar
-    AND INV.SPECODE = 'IHR'
-
-    -- İptal faturalar hariç
-    AND ISNULL(INV.CANCELLED,0) = 0
-
-    -- İptal satırlar hariç
-    AND ISNULL(STL.CANCELLED,0) = 0
-
-    -- Malzeme satırları
-    AND STL.LINETYPE = 0
-
-    -- Satış faturaları
-    AND INV.TRCODE IN (7,8)
+FROM LOT_MALIYET
 
 ORDER BY
-    INV.DATE_,
-    INV.FICHENO,
-    ITM.CODE,
-    LOT.CODE;
+    FATURA_TARIHI,
+    FATURA_NO,
+    STOK_KODU,
+    LOT_NUMARASI;
