@@ -1,0 +1,93 @@
+SELECT
+    P.LREF                                         AS PERSONEL_REF,
+    P.CODE                                         AS SICIL_NO,
+
+    P.NAME                                         AS AD,
+    P.MIDNAME                                      AS IKINCI_AD,
+    P.SURNAME                                      AS SOYAD,
+
+    LTRIM(RTRIM(
+        ISNULL(P.NAME, '') + ' ' +
+        CASE
+            WHEN ISNULL(P.MIDNAME, '') <> ''
+            THEN P.MIDNAME + ' '
+            ELSE ''
+        END +
+        ISNULL(P.SURNAME, '')
+    ))                                             AS AD_SOYAD,
+
+    ID.IDTCNO                                      AS TC_KIMLIK_NO,
+
+    CASE P.SEX
+        WHEN 1 THEN 'Erkek'
+        WHEN 2 THEN 'Kadın'
+        ELSE 'Belirsiz'
+    END                                            AS CINSIYET,
+
+    P.BIRTHDATE                                    AS DOGUM_TARIHI,
+
+    /* PERSONEL TİPİ - MAVİ YAKA / BEYAZ YAKA */
+    P.SPECODE                                      AS PERSONEL_TIPI,
+
+    /* KURUM */
+    P.FIRMNR                                       AS KURUM_NO,
+    FRM.NAME                                       AS KURUM_ADI,
+
+    /* DEPARTMAN */
+    DPT.NAME                                       AS DEPARTMAN_ADI,
+
+    /* İŞYERİ */
+    DIV.NAME                                       AS ISYERI_ADI,
+
+    /* BİRİM */
+    UNT.NAME                                       AS BIRIM_ADI,
+
+    /* MASRAF MERKEZİ */
+    FIN.EXPCENTER                                  AS MASRAF_MERKEZI,
+
+    /* TARİHLER */
+    P.INDATE                                       AS ISE_GIRIS_TARIHI,
+    P.OUTDATE                                      AS ISTEN_CIKIS_TARIHI,
+    P.CONTRACTENDDATE                              AS SOZLESME_BITIS_TARIHI,
+
+    P.STATUS                                       AS STATUS_KODU,
+
+    CASE
+        WHEN P.OUTDATE IS NULL
+          OR YEAR(P.OUTDATE) <= 1900
+          OR P.OUTDATE > GETDATE()
+        THEN 'AKTIF'
+        ELSE 'ISTEN AYRILMIS'
+    END                                            AS PERSONEL_DURUMU
+
+FROM LH_001_PERSON P
+
+/* KİMLİK BİLGİLERİ */
+LEFT JOIN LH_001_PERIDINF ID
+       ON ID.LREF = P.LREF
+
+/* MALİ BİLGİLER / MASRAF MERKEZİ */
+LEFT JOIN LH_001_PERFIN FIN
+       ON FIN.PERREF = P.LREF
+
+/* KURUM */
+LEFT JOIN L_CAPIFIRM FRM
+       ON FRM.NR = P.FIRMNR
+
+/* DEPARTMAN */
+LEFT JOIN L_CAPIDEPT DPT
+       ON DPT.FIRMNR = P.FIRMNR
+      AND DPT.NR = P.DEPTNR
+
+/* İŞYERİ */
+LEFT JOIN L_CAPIDIV DIV
+       ON DIV.FIRMNR = P.FIRMNR
+      AND DIV.NR = P.LOCNR
+
+/* BİRİM */
+LEFT JOIN L_CAPIUNIT UNT
+       ON UNT.FIRMNR = P.FIRMNR
+      AND UNT.NR = P.UNITNR
+
+ORDER BY
+    P.CODE;
