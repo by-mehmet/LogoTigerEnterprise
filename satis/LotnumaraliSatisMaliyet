@@ -1,0 +1,86 @@
+DECLARE @BaslangicTarihi DATE = '2026-01-01';
+DECLARE @BitisTarihi     DATE = '2026-06-30';
+
+SELECT
+    INV.LOGICALREF                         AS FATURA_REF,
+    INV.FICHENO                            AS FATURA_NO,
+    INV.DATE_                              AS FATURA_TARIHI,
+    INV.SPECODE                            AS OZEL_KOD,
+
+    CL.CODE                                AS CARI_KODU,
+    CL.DEFINITION_                         AS CARI_UNVANI,
+
+    ITM.LOGICALREF                         AS STOK_REF,
+    ITM.CODE                               AS STOK_KODU,
+    ITM.NAME                               AS STOK_ADI,
+
+    LOT.LOGICALREF                         AS LOT_REF,
+    LOT.CODE                               AS LOT_NUMARASI,
+
+    STL.LOGICALREF                         AS STLINE_REF,
+
+    CAST(
+        ISNULL(SLT.AMOUNT,0)
+        * ISNULL(STL.UINFO2,1)
+        / NULLIF(ISNULL(STL.UINFO1,1),0)
+        AS DECIMAL(18,4)
+    ) AS LOT_CIKIS_MIKTARI,
+
+    CAST(
+        STL.AMOUNT
+        * ISNULL(STL.UINFO2,1)
+        / NULLIF(ISNULL(STL.UINFO1,1),0)
+        AS DECIMAL(18,4)
+    ) AS FATURA_SATIR_MIKTARI,
+
+    CAST(STL.PRICE AS DECIMAL(18,4))       AS SATIS_BIRIM_FIYATI,
+
+    CAST(
+        ISNULL(SLT.AMOUNT,0)
+        * ISNULL(STL.UINFO2,1)
+        / NULLIF(ISNULL(STL.UINFO1,1),0)
+        * STL.PRICE
+        AS DECIMAL(18,2)
+    ) AS LOT_SATIS_TUTARI
+
+FROM LG_001_01_INVOICE INV WITH(NOLOCK)
+
+INNER JOIN LG_001_01_STLINE STL WITH(NOLOCK)
+    ON STL.INVOICEREF = INV.LOGICALREF
+
+INNER JOIN LG_001_ITEMS ITM WITH(NOLOCK)
+    ON ITM.LOGICALREF = STL.STOCKREF
+
+INNER JOIN LG_001_01_SLTRANS SLT WITH(NOLOCK)
+    ON SLT.STTRANSREF = STL.LOGICALREF
+
+INNER JOIN LG_001_01_SERILOTN LOT WITH(NOLOCK)
+    ON LOT.LOGICALREF = SLT.SLREF
+
+LEFT JOIN LG_001_CLCARD CL WITH(NOLOCK)
+    ON CL.LOGICALREF = INV.CLIENTREF
+
+WHERE
+    INV.DATE_ >= @BaslangicTarihi
+    AND INV.DATE_ < DATEADD(DAY,1,@BitisTarihi)
+
+    -- IHR özel kodlu faturalar
+    AND INV.SPECODE = 'IHR'
+
+    -- İptal faturalar hariç
+    AND ISNULL(INV.CANCELLED,0) = 0
+
+    -- İptal satırlar hariç
+    AND ISNULL(STL.CANCELLED,0) = 0
+
+    -- Malzeme satırları
+    AND STL.LINETYPE = 0
+
+    -- Satış faturaları
+    AND INV.TRCODE IN (7,8)
+
+ORDER BY
+    INV.DATE_,
+    INV.FICHENO,
+    ITM.CODE,
+    LOT.CODE;
